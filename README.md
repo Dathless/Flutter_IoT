@@ -6,6 +6,45 @@ A Flutter application for IoT device management and monitoring.
 
 This is a Flutter-based IoT application designed to connect, control, and monitor Internet of Things devices. It provides a user-friendly interface for interacting with various IoT sensors and actuators, allowing users to view real-time data, send commands, and manage device configurations.
 
+## How to Install Project
+
+### Prerequisites
+
+Before setting up the project, ensure you have the following installed:
+
+- **Flutter SDK**: Download and install Flutter from the [official website](https://flutter.dev/docs/get-started/install). Follow the installation instructions for your operating system.
+- **Dart SDK**: Included with Flutter.
+- **Git**: For cloning the repository.
+- **IDE**: Android Studio, VS Code, or IntelliJ IDEA with Flutter and Dart plugins.
+
+Verify the installation by running:
+
+```bash
+flutter doctor
+```
+
+This command checks your environment and displays a report of the status of your Flutter installation.
+
+### Clone the Repository
+
+Clone this project to your local machine using Git:
+
+```bash
+git clone https://github.com/Dathless/Flutter_IoT.git
+cd iot_app
+```
+
+
+### Install Dependencies
+
+After cloning, install the project dependencies by running:
+
+```bash
+flutter pub get
+```
+
+This will download and install all the required packages listed in `pubspec.yaml`.
+
 ## Packages/Dependencies
 
 The following packages are used in this project:
