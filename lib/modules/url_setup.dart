@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 
 class UrlSetup extends StatefulWidget {
-  final Function(String) onConnect;
+  final Future<String?> Function(String) onConnect;
 
-  const UrlSetup({
-    super.key,
-    required this.onConnect,
-  });
+  const UrlSetup({super.key, required this.onConnect});
 
   @override
   _UrlSetupState createState() => _UrlSetupState();
@@ -30,7 +27,7 @@ class _UrlSetupState extends State<UrlSetup> {
     super.dispose();
   }
 
-  void _handleConnect() {
+  Future<void> _handleConnect() async {
     final url = _urlController.text.trim();
     if (url.isEmpty || url == "http://") {
       setState(() {
@@ -44,7 +41,14 @@ class _UrlSetupState extends State<UrlSetup> {
       _errorMessage = null;
     });
 
-    widget.onConnect(url);
+    final errorMessage = await widget.onConnect(url);
+
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = errorMessage;
+      });
+    }
   }
 
   @override
