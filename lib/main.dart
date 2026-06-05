@@ -18,6 +18,7 @@ import 'modules/display_control.dart';
 import 'modules/url_setup.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:intl/intl.dart';
 
 void main() => runApp(MyApp());
@@ -100,7 +101,6 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
   final WebAudioRecorder _webRecorder = WebAudioRecorder();
   bool _isRecording = false;
   bool _isProcessingVoice = false;
-  String? _requestPath;
   String? _userText;
   String? _aiResponse;
   dynamic _responseAudioFile;
@@ -117,6 +117,18 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
   String frontServoState = "--";
   String backServoState = "--";
   bool isServoBusy = false;
+  String motorStatus = "closed";
+  bool isMotorBusy = false;
+
+  bool livingRoomLed = false;
+  bool bedroomLed = false;
+  bool diningLed = false;
+  bool wcLed = false;
+  bool garageLed = false;
+
+  DateTime? _lastLedControlTime = null;
+  final Duration _ledGracePeriod = Duration(seconds: 2);
+
   bool isGasAlert = false;
   bool isGasAlertCritical = false;
   String alertTime = "";
@@ -212,22 +224,74 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
   void _startDataRefresh() {
     _refreshSensors();
     _refreshGasStatus();
-    _sensorTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+    _sensorTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       _refreshSensors();
     });
-    _gasTimer = Timer.periodic(Duration(milliseconds: 800), (timer) {
+    _gasTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       _refreshGasStatus();
     });
   }
 
   void _refreshSensors() async {
-    final dhtData = await api.getSensorData('/dht');
-    final stepperData = await api.getStepperStatus();
+    final dhtDataFuture = api.getSensorData('/dht');
+    final stepperDataFuture = api.getStepperStatus();
+    final motorDataFuture = api.getMotorStatus();
+    final ledDataFuture = api.getLedStatus();
+    final frontServoFuture = api.getServoStatus('front');
+    final backServoFuture = api.getServoStatus('back');
+
+    final dhtData = await dhtDataFuture;
+    final stepperData = await stepperDataFuture;
+    final motorData = await motorDataFuture;
+    final ledData = await ledDataFuture;
+    final frontServoData = await frontServoFuture;
+    final backServoData = await backServoFuture;
 
     String fetchedStepperState = '--';
+    String fetchedMotorStatus = '--';
+    String fetchedFrontServoStatus = '--';
+    String fetchedBackServoStatus = '--';
+    bool fetchedLivingRoomLed = false;
+    bool fetchedBedroomLed = false;
+    bool fetchedDiningLed = false;
+    bool fetchedWcLed = false;
+    bool fetchedGarageLed = false;
 
     if (stepperData['status'] == 'success') {
-      fetchedStepperState = stepperData['state']?.toString() ?? '--';
+      fetchedStepperState =
+          stepperData['state']?.toString() ??
+          stepperData['message']?.toString() ??
+          '--';
+    }
+
+    if (motorData['status'] != '') {
+      final status = motorData['status']?.toString() ?? '--';
+      if (status.toLowerCase().contains('open')) {
+        fetchedMotorStatus = 'open';
+      } else if (status.toLowerCase().contains('closed')) {
+        fetchedMotorStatus = 'closed';
+      } else {
+        fetchedMotorStatus = status;
+      }
+    }
+
+    if (ledData['status'] == 'success') {
+      final statusMap = _extractLedMap(ledData);
+      if (!_isLedUnderGracePeriod()) {
+        fetchedLivingRoomLed = _parseBoolState(statusMap['living-room']);
+        fetchedBedroomLed = _parseBoolState(statusMap['bedroom']);
+        fetchedDiningLed = _parseBoolState(statusMap['dining']);
+        fetchedWcLed = _parseBoolState(statusMap['wc']);
+        fetchedGarageLed = _parseBoolState(statusMap['gara']);
+      }
+    }
+
+    if (frontServoData['status'] == 'success') {
+      fetchedFrontServoStatus = frontServoData['message']?.toString() ?? '--';
+    }
+
+    if (backServoData['status'] == 'success') {
+      fetchedBackServoStatus = backServoData['message']?.toString() ?? '--';
     }
 
     if (mounted) {
@@ -235,8 +299,48 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
         temp = dhtData['temp']?.toString() ?? "--";
         humidity = dhtData['humi']?.toString() ?? "--";
         stepperState = fetchedStepperState;
+        motorStatus = fetchedMotorStatus;
+        frontServoState = fetchedFrontServoStatus;
+        backServoState = fetchedBackServoStatus;
+        if (!_isLedUnderGracePeriod()) {
+          livingRoomLed = fetchedLivingRoomLed;
+          bedroomLed = fetchedBedroomLed;
+          diningLed = fetchedDiningLed;
+          wcLed = fetchedWcLed;
+          garageLed = fetchedGarageLed;
+        }
       });
     }
+  }
+
+  bool _parseBoolState(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.toLowerCase().trim();
+      return normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'on' ||
+          normalized == 'open';
+    }
+    return false;
+  }
+
+  Map<String, dynamic> _extractLedMap(Map<String, dynamic> response) {
+    if (response.containsKey('living-room') ||
+        response.containsKey('bedroom')) {
+      return response;
+    }
+
+    final possibleKeys = ['data', 'result', 'payload', 'value'];
+    for (final key in possibleKeys) {
+      final nested = response[key];
+      if (nested is Map<String, dynamic>) {
+        return nested;
+      }
+    }
+
+    return response;
   }
 
   void _refreshGasStatus() async {
@@ -276,7 +380,14 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
 
   // Hàm helper để gửi lệnh điều khiển đèn theo tên phòng
   void _controlLed(String room, bool status) {
+    _lastLedControlTime = DateTime.now();
     api.sendControl('/led/$room', {'status': status ? 1 : 0});
+  }
+
+  bool _isLedUnderGracePeriod() {
+    if (_lastLedControlTime == null) return false;
+    final elapsed = DateTime.now().difference(_lastLedControlTime!);
+    return elapsed < _ledGracePeriod;
   }
 
   Future<void> _controlStepper(String action, int times) async {
@@ -316,6 +427,54 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
       if (success) {
         _refreshSensors();
       }
+    }
+  }
+
+  Future<void> _controlMotor(String action) async {
+    if (isMotorBusy) return;
+    setState(() => isMotorBusy = true);
+
+    final success = action == 'open'
+        ? await api.controlMotorOpen()
+        : await api.controlMotorClose();
+
+    if (mounted) {
+      setState(() => isMotorBusy = false);
+      final message = success
+          ? 'Lệnh cửa chính "$action" đã được gửi.'
+          : 'Không thể gửi lệnh cửa chính. Vui lòng kiểm tra kết nối.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      if (success) {
+        _refreshMotorStatus();
+      }
+    }
+  }
+
+  void _refreshMotorStatus() async {
+    final motorData = await api.getMotorStatus();
+
+    String fetchedMotorStatus = '--';
+
+    if (motorData['status'] == 'success') {
+      final status = motorData['status']?.toString() ?? '--';
+      // Map API status response to display status
+      if (status.toLowerCase().contains('open') ||
+          motorData['status']?.toString().toLowerCase() == 'open') {
+        fetchedMotorStatus = 'open';
+      } else if (status.toLowerCase().contains('closed') ||
+          motorData['status']?.toString().toLowerCase() == 'closed') {
+        fetchedMotorStatus = 'closed';
+      } else {
+        fetchedMotorStatus = motorData['status']?.toString() ?? '--';
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        motorStatus = fetchedMotorStatus;
+      });
     }
   }
 
@@ -468,7 +627,6 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
         setState(() {
           _isRecording = true;
           _isProcessingVoice = false;
-          _requestPath = null;
           _userText = null;
           _aiResponse = null;
           _responseAudioFile = null;
@@ -511,7 +669,6 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
         setState(() {
           _isRecording = true;
           _isProcessingVoice = false;
-          _requestPath = path;
           _userText = null;
           _aiResponse = null;
           _responseAudioFile = null;
@@ -554,7 +711,6 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
           );
           return;
         }
-        setState(() => _requestPath = path);
         if (!File(path).existsSync()) {
           setState(() => _isProcessingVoice = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -562,17 +718,23 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
           );
           return;
         }
-        final fileSize = await File(path).length();
-        if (fileSize == 0) {
+        final bytes = await File(path).readAsBytes();
+        if (bytes.isEmpty) {
           setState(() => _isProcessingVoice = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Tệp ghi âm trống, vui lòng thử lại.')),
           );
           return;
         }
-        print('DEBUG: Recording file size: $fileSize bytes');
-        // Gửi file đến server
-        resp = await api.processVoice(path);
+
+        final trimmedBytes = await _trimWavSilence(bytes, threshold: 0.02);
+        if (trimmedBytes.length < bytes.length) {
+          print(
+            'DEBUG: Removed silence from WAV file: ${bytes.length - trimmedBytes.length} bytes',
+          );
+        }
+
+        resp = await api.processVoiceBytes(trimmedBytes, 'request_audio.wav');
       }
       if (resp.containsKey('error')) {
         setState(() => _isProcessingVoice = false);
@@ -610,6 +772,89 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Lỗi khi dừng/thực hiện: $e')));
     }
+  }
+
+  Future<List<int>> _trimWavSilence(
+    List<int> wavBytes, {
+    double threshold = 0.02,
+  }) async {
+    if (wavBytes.length < 44) return wavBytes;
+    final header = String.fromCharCodes(wavBytes.sublist(0, 4));
+    final waveChunk = String.fromCharCodes(wavBytes.sublist(8, 12));
+    if (header != 'RIFF' || waveChunk != 'WAVE') return wavBytes;
+
+    final byteData = ByteData.sublistView(Uint8List.fromList(wavBytes));
+    int offset = 12;
+    int dataOffset = -1;
+    int dataSize = 0;
+    int numChannels = 1;
+    int bitsPerSample = 16;
+    int audioFormat = 1;
+
+    while (offset + 8 <= wavBytes.length) {
+      final chunkId = String.fromCharCodes(
+        wavBytes.sublist(offset, offset + 4),
+      );
+      final chunkSize = byteData.getUint32(offset + 4, Endian.little);
+      final chunkDataStart = offset + 8;
+      if (chunkDataStart + chunkSize > wavBytes.length) break;
+
+      if (chunkId == 'fmt ') {
+        audioFormat = byteData.getUint16(chunkDataStart, Endian.little);
+        numChannels = byteData.getUint16(chunkDataStart + 2, Endian.little);
+        bitsPerSample = byteData.getUint16(chunkDataStart + 14, Endian.little);
+      } else if (chunkId == 'data') {
+        dataOffset = chunkDataStart;
+        dataSize = chunkSize;
+        break;
+      }
+
+      offset = chunkDataStart + chunkSize;
+      if (chunkSize.isOdd) offset += 1;
+    }
+
+    if (dataOffset < 0 || dataSize <= 0) return wavBytes;
+    if (audioFormat != 1 || bitsPerSample != 16) return wavBytes;
+
+    final frameSize = numChannels * (bitsPerSample ~/ 8);
+    final frameCount = dataSize ~/ frameSize;
+
+    bool frameHasVoice(int frameIndex) {
+      final base = dataOffset + frameIndex * frameSize;
+      for (int channel = 0; channel < numChannels; channel++) {
+        final sampleOffset = base + channel * 2;
+        final sample = byteData.getInt16(sampleOffset, Endian.little);
+        final amplitude = sample.abs() / 32768.0;
+        if (amplitude > threshold) return true;
+      }
+      return false;
+    }
+
+    int firstVoiceFrame = 0;
+    while (firstVoiceFrame < frameCount && !frameHasVoice(firstVoiceFrame)) {
+      firstVoiceFrame++;
+    }
+    int lastVoiceFrame = frameCount - 1;
+    while (lastVoiceFrame >= 0 && !frameHasVoice(lastVoiceFrame)) {
+      lastVoiceFrame--;
+    }
+
+    if (firstVoiceFrame == 0 && lastVoiceFrame == frameCount - 1)
+      return wavBytes;
+    if (firstVoiceFrame >= frameCount || lastVoiceFrame < 0) return wavBytes;
+
+    final trimmedData = wavBytes.sublist(
+      dataOffset + firstVoiceFrame * frameSize,
+      dataOffset + (lastVoiceFrame + 1) * frameSize,
+    );
+
+    final result = Uint8List(wavBytes.length - dataSize + trimmedData.length);
+    result.setAll(0, wavBytes.sublist(0, dataOffset));
+    result.setAll(wavBytes.sublist(0, dataOffset).length, trimmedData);
+    final resultView = ByteData.sublistView(result);
+    resultView.setUint32(4, result.length - 8, Endian.little);
+    resultView.setUint32(dataOffset - 4, trimmedData.length, Endian.little);
+    return result;
   }
 
   Future<void> _playResponseAudio() async {
@@ -718,33 +963,33 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
               child: Column(
                 children: [
                   LedControl(
-                    // Component UI từ led_control.dart
-                    onToggle: (val) => _controlLed('living-room', val),
+                    title: 'Phòng khách - LED',
+                    isSwitched: livingRoomLed,
+                    onToggle: (val) {
+                      setState(() => livingRoomLed = val);
+                      _controlLed('living-room', val);
+                    },
                   ),
                   Divider(height: 1),
-                  _buildLedItem(
-                    "Phòng ngủ",
-                    Icons.bed,
-                    (val) => _controlLed('bedroom', val),
-                  ),
+                  _buildLedItem("Phòng ngủ", Icons.bed, bedroomLed, (val) {
+                    setState(() => bedroomLed = val);
+                    _controlLed('bedroom', val);
+                  }),
                   Divider(height: 1),
-                  _buildLedItem(
-                    "Phòng ăn",
-                    Icons.restaurant,
-                    (val) => _controlLed('dining', val),
-                  ),
+                  _buildLedItem("Phòng ăn", Icons.restaurant, diningLed, (val) {
+                    setState(() => diningLed = val);
+                    _controlLed('dining', val);
+                  }),
                   Divider(height: 1),
-                  _buildLedItem(
-                    "Nhà vệ sinh",
-                    Icons.wc,
-                    (val) => _controlLed('wc', val),
-                  ),
+                  _buildLedItem("Nhà vệ sinh", Icons.wc, wcLed, (val) {
+                    setState(() => wcLed = val);
+                    _controlLed('wc', val);
+                  }),
                   Divider(height: 1),
-                  _buildLedItem(
-                    "Gara xe",
-                    Icons.garage,
-                    (val) => _controlLed('gara', val),
-                  ),
+                  _buildLedItem("Gara xe", Icons.garage, garageLed, (val) {
+                    setState(() => garageLed = val);
+                    _controlLed('gara', val);
+                  }),
                 ],
               ),
             ),
@@ -772,10 +1017,128 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
             ),
             SizedBox(height: 10),
             ServoControl(
+              frontTitle: 'Cửa phòng ngủ',
+              backTitle: 'Cửa phòng vệ sinh',
               frontStatus: frontServoState,
               backStatus: backServoState,
               isBusy: isServoBusy,
               onCommand: _controlServo,
+            ),
+
+            SizedBox(height: 30),
+
+            // Điều khiển cửa chính
+            Text(
+              "Điều khiển cửa chính",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 10),
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Trạng thái cửa chính",
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              motorStatus == 'open'
+                                  ? 'Mở'
+                                  : motorStatus == 'closed'
+                                  ? 'Đóng'
+                                  : 'Không xác định',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: motorStatus == 'open'
+                                    ? Colors.green
+                                    : motorStatus == 'closed'
+                                    ? Colors.red
+                                    : Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Icon(
+                          motorStatus == 'open'
+                              ? Icons.lock_open
+                              : motorStatus == 'closed'
+                              ? Icons.lock
+                              : Icons.help,
+                          size: 40,
+                          color: motorStatus == 'open'
+                              ? Colors.green
+                              : motorStatus == 'closed'
+                              ? Colors.red
+                              : Colors.grey,
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: Icon(Icons.lock_open),
+                            label: Text('Mở'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                            ),
+                            onPressed: isMotorBusy
+                                ? null
+                                : () => _controlMotor('open'),
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: Icon(Icons.lock),
+                            label: Text('Đóng'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                            ),
+                            onPressed: isMotorBusy
+                                ? null
+                                : () => _controlMotor('close'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (isMotorBusy) ...[
+                      SizedBox(height: 16),
+                      Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Đang gửi...'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
 
             SizedBox(height: 30),
@@ -801,26 +1164,24 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
   }
 
   // Hàm tạo nhanh các dòng điều khiển đèn tương tự led_control.dart
-  Widget _buildLedItem(String title, IconData icon, Function(bool) onToggle) {
-    return StateUpdater(
-      builder: (context, isSwitched, setStateItem) {
-        return ListTile(
-          leading: Icon(
-            icon,
-            color: isSwitched ? Colors.yellow : Colors.grey,
-            size: 30,
-          ),
-          title: Text(title, style: TextStyle(fontWeight: FontWeight.w600)),
-          trailing: Switch(
-            value: isSwitched,
-            onChanged: (value) {
-              setStateItem(value);
-              onToggle(value);
-            },
-            activeThumbColor: Colors.orangeAccent,
-          ),
-        );
-      },
+  Widget _buildLedItem(
+    String title,
+    IconData icon,
+    bool isSwitched,
+    Function(bool) onToggle,
+  ) {
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isSwitched ? Colors.yellow : Colors.grey,
+        size: 30,
+      ),
+      title: Text(title, style: TextStyle(fontWeight: FontWeight.w600)),
+      trailing: Switch(
+        value: isSwitched,
+        onChanged: onToggle,
+        activeThumbColor: Colors.orangeAccent,
+      ),
     );
   }
 
@@ -858,14 +1219,7 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                SizedBox(height: 4),
-                Text(
-                  "Mức gas: ${gasValue?.toStringAsFixed(1) ?? '--'} $gasUnit",
-                  style: TextStyle(
-                    color: iconColor.withOpacity(0.9),
-                    fontSize: 13,
-                  ),
-                ),
+
                 SizedBox(height: 4),
                 Text(
                   statusText,
@@ -891,26 +1245,6 @@ class _SmartHomeScreenState extends State<SmartHomeScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-// Widget nhỏ để quản lý trạng thái riêng cho từng switch trong List
-class StateUpdater extends StatefulWidget {
-  final Widget Function(BuildContext, bool, Function(bool)) builder;
-  const StateUpdater({required this.builder});
-  @override
-  _StateUpdaterState createState() => _StateUpdaterState();
-}
-
-class _StateUpdaterState extends State<StateUpdater> {
-  bool state = false;
-  @override
-  Widget build(BuildContext context) {
-    return widget.builder(
-      context,
-      state,
-      (newVal) => setState(() => state = newVal),
     );
   }
 }

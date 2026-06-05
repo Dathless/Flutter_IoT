@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
-class LedControl extends StatefulWidget {
+class LedControl extends StatelessWidget {
+  final String title;
+  final bool isSwitched;
   final Function(bool) onToggle;
-  const LedControl({super.key, required this.onToggle});
 
-  @override
-  // ignore: library_private_types_in_public_api
-  _LedControlState createState() => _LedControlState();
-}
-
-class _LedControlState extends State<LedControl> {
-  bool isSwitched = false;
+  const LedControl({
+    super.key,
+    required this.title,
+    required this.isSwitched,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -20,16 +20,10 @@ class _LedControlState extends State<LedControl> {
         color: isSwitched ? Colors.yellow : Colors.grey,
         size: 30,
       ),
-      title: Text(
-        "Phòng khách - LED",
-        style: TextStyle(fontWeight: FontWeight.w600),
-      ),
+      title: Text(title, style: TextStyle(fontWeight: FontWeight.w600)),
       trailing: Switch(
         value: isSwitched,
-        onChanged: (value) {
-          setState(() => isSwitched = value);
-          widget.onToggle(value);
-        },
+        onChanged: onToggle,
         activeThumbColor: Colors.orangeAccent,
       ),
     );

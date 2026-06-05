@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 class ServoControl extends StatelessWidget {
   final String frontStatus;
   final String backStatus;
+  final String frontTitle;
+  final String backTitle;
   final bool isBusy;
   final Function(String door, String action) onCommand;
 
@@ -10,6 +12,8 @@ class ServoControl extends StatelessWidget {
     super.key,
     required this.frontStatus,
     required this.backStatus,
+    required this.frontTitle,
+    required this.backTitle,
     required this.onCommand,
     this.isBusy = false,
   });
@@ -71,9 +75,9 @@ class ServoControl extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _buildServoCard(context, 'Servo cửa trước', frontStatus, 'front'),
+        _buildServoCard(context, frontTitle, frontStatus, 'front'),
         SizedBox(height: 15),
-        _buildServoCard(context, 'Servo cửa sau', backStatus, 'back'),
+        _buildServoCard(context, backTitle, backStatus, 'back'),
       ],
     );
   }

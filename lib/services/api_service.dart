@@ -151,4 +151,43 @@ class ApiService {
       return false;
     }
   }
+
+  Future<Map<String, dynamic>> getLedStatus() async {
+    return await getSensorData('/led/');
+  }
+
+  Future<Map<String, dynamic>> getServoStatus(String door) async {
+    return await getSensorData('/servo/$door');
+  }
+
+  // Motor control methods for main door
+  Future<Map<String, dynamic>> getMotorStatus() async {
+    return await getSensorData('/motor/status');
+  }
+
+  Future<bool> controlMotorOpen() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/motor/open'),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode({}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> controlMotorClose() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/motor/close'),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode({}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }

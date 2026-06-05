@@ -18,17 +18,10 @@ class StepperControl extends StatefulWidget {
 
 class _StepperControlState extends State<StepperControl> {
   String _selectedAction = 'open';
-  int _selectedTimes = 1;
 
   void _setAction(String action) {
     setState(() {
       _selectedAction = action;
-    });
-  }
-
-  void _setTimes(int times) {
-    setState(() {
-      _selectedTimes = times;
     });
   }
 
@@ -77,26 +70,14 @@ class _StepperControlState extends State<StepperControl> {
             ),
             SizedBox(height: 16),
             Text(
-              'Số lần chuyển động',
+              'Số lần chuyển động: 2',
               style: TextStyle(color: Colors.grey[700]),
-            ),
-            SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              children: List.generate(4, (index) {
-                final times = index + 1;
-                return ChoiceChip(
-                  label: Text(times.toString()),
-                  selected: _selectedTimes == times,
-                  onSelected: widget.isBusy ? null : (_) => _setTimes(times),
-                );
-              }),
             ),
             SizedBox(height: 20),
             ElevatedButton(
               onPressed: widget.isBusy
                   ? null
-                  : () => widget.onControl(_selectedAction, _selectedTimes),
+                  : () => widget.onControl(_selectedAction, 2),
               child: Text(widget.isBusy ? 'Đang gửi...' : 'Gửi lệnh'),
             ),
           ],
