@@ -69,7 +69,7 @@ async def execute_hardware_action(device: str, scope: str, state: str, user_inpu
     if state == "xem":
         if device == "cảm biến dht":
             dht_data = dht_manager.get_sensor_data()
-            return f"Nhiệt độ hiện tại đo được là {dht_data.get('temperature', 25)}°C và độ ẩm là {dht_data.get('humidity', 60)}%."
+            return f"Nhiệt độ hiện tại đo được là {dht_data.get('temp', 25)}°C và độ ẩm là {dht_data.get('humi', 60)}%."
         elif device == "cảm biến gas":
             gas_data = gas_manager.get_current_gas_data()
             val = float(gas_data.get('value', 1.0))
